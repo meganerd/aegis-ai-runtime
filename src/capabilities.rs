@@ -2,16 +2,26 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Capability {
+    #[serde(rename = "http_get")]
     HttpGet,
+    #[serde(rename = "http_post")]
     HttpPost,
-    Http { method: String },
-    FileRead { path_prefix: Vec<String> },
-    FileWrite { path_prefix: Vec<String> },
-    FileList { path_prefix: Vec<String> },
+    #[serde(rename = "http")]
+    Http,
+    #[serde(rename = "file_read")]
+    FileRead,
+    #[serde(rename = "file_write")]
+    FileWrite,
+    #[serde(rename = "file_list")]
+    FileList,
+    #[serde(rename = "kv_get")]
     KvGet,
-    KvSet { key_prefix: Vec<String> },
-    Exec { allowed_commands: Vec<String> },
-    Env { allowed_vars: Vec<String> },
+    #[serde(rename = "kv_set")]
+    KvSet,
+    #[serde(rename = "exec")]
+    Exec,
+    #[serde(rename = "env")]
+    Env,
 }
 
 impl Capability {
@@ -19,15 +29,19 @@ impl Capability {
         match self {
             Capability::HttpGet => "http_get",
             Capability::HttpPost => "http_post",
-            Capability::Http { .. } => "http",
-            Capability::FileRead { .. } => "file_read",
-            Capability::FileWrite { .. } => "file_write",
-            Capability::FileList { .. } => "file_list",
+            Capability::Http => "http",
+            Capability::FileRead => "file_read",
+            Capability::FileWrite => "file_write",
+            Capability::FileList => "file_list",
             Capability::KvGet => "kv_get",
-            Capability::KvSet { .. } => "kv_set",
-            Capability::Exec { .. } => "exec",
-            Capability::Env { .. } => "env",
+            Capability::KvSet => "kv_set",
+            Capability::Exec => "exec",
+            Capability::Env => "env",
         }
+    }
+
+    pub fn matches(&self, other: &Capability) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 }
 
@@ -42,48 +56,33 @@ impl GrantSet {
     }
 
     pub fn has(&self, cap: &Capability) -> bool {
-        self.caps.iter().any(|c| match (c, cap) {
-            (Capability::HttpGet, Capability::HttpGet) => true,
-            (Capability::HttpPost, Capability::HttpPost) => true,
-            (Capability::Http { .. }, Capability::Http { .. }) => true,
-            (
-                Capability::FileRead { path_prefix: p1 },
-                Capability::FileRead { path_prefix: p2 },
-            ) => p2.iter().any(|p| p1.iter().any(|pf| p.starts_with(pf))),
-            (
-                Capability::FileWrite { path_prefix: p1 },
-                Capability::FileWrite { path_prefix: p2 },
-            ) => p2.iter().any(|p| p1.iter().any(|pf| p.starts_with(pf))),
-            (
-                Capability::FileList { path_prefix: p1 },
-                Capability::FileList { path_prefix: p2 },
-            ) => p2.iter().any(|p| p1.iter().any(|pf| p.starts_with(pf))),
-            (Capability::KvGet, Capability::KvGet) => true,
-            (Capability::KvSet { key_prefix: p1 }, Capability::KvSet { key_prefix: p2 }) => {
-                p2.iter().any(|p| p1.iter().any(|pf| p.starts_with(pf)))
-            }
-            (
-                Capability::Exec {
-                    allowed_commands: a1,
-                },
-                Capability::Exec {
-                    allowed_commands: a2,
-                },
-            ) => a2.iter().any(|c| a1.contains(c)),
-            (Capability::Env { allowed_vars: a1 }, Capability::Env { allowed_vars: a2 }) => {
-                a2.iter().any(|v| a1.contains(v))
-            }
-            _ => false,
-        })
+        self.caps.iter().any(|c| c.matches(cap))
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceLimits {
+    #[serde(default = "default_max_memory")]
     pub max_memory_mb: usize,
+    #[serde(default = "default_max_operations")]
     pub max_operations: u64,
+    #[serde(default = "default_max_call_depth")]
     pub max_call_depth: u32,
+    #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
+}
+
+fn default_max_memory() -> usize {
+    64
+}
+fn default_max_operations() -> u64 {
+    1_000_000
+}
+fn default_max_call_depth() -> u32 {
+    64
+}
+fn default_timeout() -> u64 {
+    30
 }
 
 impl Default for ResourceLimits {

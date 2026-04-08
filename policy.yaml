@@ -7,10 +7,9 @@ default_capabilities:
 tools:
   default:
     capabilities:
-      - http_get:
-      - kv_set:
-          allowed_prefixes: []
-      - kv_get:
+      - http_get
+      - kv_set
+      - kv_get
     resource_limits:
       memory_mb: 64
       max_operations: 1000000
@@ -20,9 +19,8 @@ tools:
 
   weather_fetch:
     capabilities:
-      - http_get:
-      - kv_set:
-          allowed_prefixes: ["weather:"]
+      - http_get
+      - kv_set
     resource_limits:
       memory_mb: 32
       max_operations: 1000000
@@ -32,10 +30,8 @@ tools:
 
   file_processor:
     capabilities:
-      - file_read:
-          path_prefix: ["/data/input/"]
-      - file_write:
-          path_prefix: ["/data/output/"]
+      - file_read
+      - file_write
     resource_limits:
       memory_mb: 128
       max_operations: 10000000
@@ -45,10 +41,8 @@ tools:
 
   deploy_config:
     capabilities:
-      - file_write:
-          path_prefix: ["/etc/myapp/"]
-      - exec:
-          allowed_commands: ["systemctl reload myapp"]
+      - file_write
+      - exec
     resource_limits:
       memory_mb: 64
       max_operations: 1000000

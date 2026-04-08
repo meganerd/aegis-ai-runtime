@@ -1,5 +1,4 @@
 use crate::capabilities::{Capability, GrantSet, ResourceLimits};
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -31,7 +30,6 @@ impl Aegis {
     }
 
     pub fn execute(&self, code: &str) -> Result<rhai::Dynamic, String> {
-        // Create a fresh engine for each execution
         let mut engine = rhai::Engine::new_raw();
 
         let grants = self.grants.clone();
@@ -42,8 +40,8 @@ impl Aegis {
             println!("[aegis] {}", msg);
         });
 
-        // Register 'yield' - always available
-        engine.register_fn("yield", |result: rhai::Dynamic| result);
+        // Register 'result' - always available (yield is reserved in Rhai)
+        engine.register_fn("result", |result: rhai::Dynamic| result);
 
         // Register 'sleep' - always available
         engine.register_fn("sleep", |millis: u64| {
@@ -51,7 +49,8 @@ impl Aegis {
         });
 
         // Register 'http_get' if granted
-        if grants.read().unwrap().has(&Capability::HttpGet) {
+        let has_http_get = grants.read().unwrap().has(&Capability::HttpGet);
+        if has_http_get {
             engine.register_fn("http_get", |url: &str| -> Result<String, String> {
                 let client = reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_secs(30))
@@ -69,11 +68,8 @@ impl Aegis {
         }
 
         // Register 'kv_set' if granted
-        if grants
-            .read()
-            .unwrap()
-            .has(&Capability::KvSet { key_prefix: vec![] })
-        {
+        let has_kv_set = grants.read().unwrap().has(&Capability::KvSet);
+        if has_kv_set {
             let kv_store = kv_store.clone();
             engine.register_fn("kv_set", move |key: &str, value: &str| {
                 kv_store
@@ -85,10 +81,44 @@ impl Aegis {
         }
 
         // Register 'kv_get' if granted
-        if grants.read().unwrap().has(&Capability::KvGet) {
+        let has_kv_get = grants.read().unwrap().has(&Capability::KvGet);
+        if has_kv_get {
             let kv_store = kv_store.clone();
             engine.register_fn("kv_get", move |key: &str| -> Option<String> {
                 kv_store.read().unwrap().get(key).cloned()
+            });
+        }
+
+        // Register 'file_read' if granted
+        let has_file_read = grants.read().unwrap().has(&Capability::FileRead);
+        if has_file_read {
+            engine.register_fn("file_read", |path: &str| -> Result<String, String> {
+                std::fs::read_to_string(path).map_err(|e| e.to_string())
+            });
+        }
+
+        // Register 'file_write' if granted
+        let has_file_write = grants.read().unwrap().has(&Capability::FileWrite);
+        if has_file_write {
+            engine.register_fn(
+                "file_write",
+                |path: &str, content: &str| -> Result<bool, String> {
+                    std::fs::write(path, content).map_err(|e| e.to_string())?;
+                    Ok(true)
+                },
+            );
+        }
+
+        // Register 'file_list' if granted
+        let has_file_list = grants.read().unwrap().has(&Capability::FileList);
+        if has_file_list {
+            engine.register_fn("file_list", |path: &str| -> Result<Vec<String>, String> {
+                let entries = std::fs::read_dir(path)
+                    .map_err(|e| e.to_string())?
+                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| e.to_string())?;
+                Ok(entries)
             });
         }
 
