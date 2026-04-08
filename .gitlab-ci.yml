@@ -10,6 +10,8 @@ variables:
 
 .test:
   image: "${RUST_IMAGE}"
+  tags:
+    - docker
   before_script:
     - rustup component add clippy rustfmt
   cache:
@@ -41,6 +43,8 @@ fmt:
 build:
   extends: .test
   stage: build
+  tags:
+    - docker
   script:
     - cargo build --release --verbose
   artifacts:
@@ -51,6 +55,8 @@ build:
 build-debug:
   extends: .test
   stage: build
+  tags:
+    - docker
   script:
     - cargo build --verbose
   artifacts:
