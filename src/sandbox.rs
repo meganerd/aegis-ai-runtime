@@ -8,6 +8,16 @@ pub struct Aegis {
     kv_store: Arc<RwLock<HashMap<String, String>>>,
 }
 
+impl Clone for Aegis {
+    fn clone(&self) -> Self {
+        Self {
+            grants: Arc::clone(&self.grants),
+            limits: Arc::clone(&self.limits),
+            kv_store: Arc::clone(&self.kv_store),
+        }
+    }
+}
+
 impl Aegis {
     pub fn new() -> Self {
         let grants = Arc::new(RwLock::new(GrantSet::default()));
@@ -21,12 +31,22 @@ impl Aegis {
         }
     }
 
-    pub fn with_policy(self, policy: &crate::policy::Policy, tool_name: &str) -> Self {
+    pub fn with_policy(&self, policy: &crate::policy::Policy, tool_name: &str) -> Self {
         if let Some(tool) = policy.get_tool(tool_name) {
-            *self.grants.write().unwrap() = GrantSet::new(tool.capabilities.clone());
-            *self.limits.write().unwrap() = tool.resource_limits.clone();
+            let grants = Arc::new(RwLock::new(GrantSet::new(tool.capabilities.clone())));
+            let limits = Arc::new(RwLock::new(tool.resource_limits.clone()));
+            Self {
+                grants,
+                limits,
+                kv_store: Arc::new(RwLock::new(HashMap::new())),
+            }
+        } else {
+            Self {
+                grants: Arc::clone(&self.grants),
+                limits: Arc::clone(&self.limits),
+                kv_store: Arc::new(RwLock::new(HashMap::new())),
+            }
         }
-        self
     }
 
     pub fn execute(&self, code: &str) -> Result<rhai::Dynamic, String> {
