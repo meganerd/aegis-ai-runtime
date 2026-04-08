@@ -1,0 +1,57 @@
+# Aegis Policy File
+
+default_capabilities:
+  - log
+  - yield
+
+tools:
+  default:
+    capabilities:
+      - http_get:
+      - kv_set:
+          allowed_prefixes: []
+      - kv_get:
+    resource_limits:
+      memory_mb: 64
+      max_operations: 1000000
+      max_call_depth: 64
+      timeout_seconds: 30
+    requires_approval: false
+
+  weather_fetch:
+    capabilities:
+      - http_get:
+      - kv_set:
+          allowed_prefixes: ["weather:"]
+    resource_limits:
+      memory_mb: 32
+      max_operations: 1000000
+      max_call_depth: 32
+      timeout_seconds: 30
+    requires_approval: false
+
+  file_processor:
+    capabilities:
+      - file_read:
+          path_prefix: ["/data/input/"]
+      - file_write:
+          path_prefix: ["/data/output/"]
+    resource_limits:
+      memory_mb: 128
+      max_operations: 10000000
+      max_call_depth: 64
+      timeout_seconds: 120
+    requires_approval: false
+
+  deploy_config:
+    capabilities:
+      - file_write:
+          path_prefix: ["/etc/myapp/"]
+      - exec:
+          allowed_commands: ["systemctl reload myapp"]
+    resource_limits:
+      memory_mb: 64
+      max_operations: 1000000
+      max_call_depth: 32
+      timeout_seconds: 60
+    requires_approval: true

@@ -1,0 +1,59 @@
+stages:
+  - test
+  - lint
+  - build
+
+variables:
+  CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+  RUST_IMAGE: "rust:1.85-bookworm"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: "sparse"
+
+.test:
+  image: "${RUST_IMAGE}"
+  before_script:
+    - rustup component add clippy rustfmt
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cargo/
+      - target/
+
+test:
+  extends: .test
+  stage: test
+  script:
+    - cargo test --verbose
+  coverage: '/^test result: .* (\d+)%$/'
+
+clippy:
+  extends: .test
+  stage: lint
+  script:
+    - cargo clippy -- -D warnings
+  allow_failure: true  # Clippy warnings are not blocking
+
+fmt:
+  extends: .test
+  stage: lint
+  script:
+    - cargo fmt --check
+
+build:
+  extends: .test
+  stage: build
+  script:
+    - cargo build --release --verbose
+  artifacts:
+    paths:
+      - target/release/aegis
+    expire_in: 1 week
+
+build-debug:
+  extends: .test
+  stage: build
+  script:
+    - cargo build --verbose
+  artifacts:
+    paths:
+      - target/debug/aegis
+    expire_in: 1 day
