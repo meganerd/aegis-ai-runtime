@@ -1,7 +1,7 @@
 pub mod capabilities;
+pub mod mcp;
 pub mod policy;
 pub mod sandbox;
-pub mod mcp;
 
 pub use capabilities::{Capability, GrantSet, ResourceLimits};
 pub use policy::Policy;
