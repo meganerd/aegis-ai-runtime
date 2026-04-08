@@ -5,7 +5,7 @@ stages:
 
 variables:
   CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
-  RUST_IMAGE: "rust:1.85-bookworm"
+  RUST_IMAGE: "rust:1.86-bookworm"
   CARGO_REGISTRIES_CRATES_IO_PROTOCOL: "sparse"
 
 .test:
