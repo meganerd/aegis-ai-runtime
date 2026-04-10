@@ -2,6 +2,7 @@ stages:
   - test
   - lint
   - build
+  - security
 
 variables:
   CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
@@ -25,14 +26,14 @@ test:
   stage: test
   script:
     - cargo test --verbose
-  coverage: '/^test result: .* (\d+)%$/'
+  coverage: '/^test result: .* (\d+)%/'
 
 clippy:
   extends: .test
   stage: lint
   script:
     - cargo clippy -- -D warnings
-  allow_failure: true  # Clippy warnings are not blocking
+  allow_failure: true
 
 fmt:
   extends: .test
@@ -40,17 +41,53 @@ fmt:
   script:
     - cargo fmt --check
 
-build:
+build:x86_64-unknown-linux-gnu:
   extends: .test
   stage: build
   tags:
     - docker
   script:
-    - cargo build --release --verbose
+    - cargo build --release --target x86_64-unknown-linux-gnu --verbose
   artifacts:
     paths:
-      - target/release/aegis
+      - target/x86_64-unknown-linux-gnu/release/aegis
     expire_in: 1 week
+
+build:aarch64-unknown-linux-gnu:
+  extends: .test
+  stage: build
+  image: rust:1.86-bookworm-arm64v8
+  script:
+    - cargo build --release --target aarch64-unknown-linux-gnu --verbose
+  artifacts:
+    paths:
+      - target/aarch64-unknown-linux-gnu/release/aegis
+    expire_in: 1 week
+  allow_failure: true
+
+build:armv7-unknown-linux-gnueabihf:
+  extends: .test
+  stage: build
+  image: rust:1.86-bookworm-armv7
+  script:
+    - cargo build --release --target armv7-unknown-linux-gnueabihf --verbose
+  artifacts:
+    paths:
+      - target/armv7-unknown-linux-gnueabihf/release/aegis
+    expire_in: 1 week
+  allow_failure: true
+
+build:x86_64-pc-windows-gnu:
+  extends: .test
+  stage: build
+  image: rust:1.86-windows
+  script:
+    - cargo build --release --target x86_64-pc-windows-gnu --verbose
+  artifacts:
+    paths:
+      - target/x86_64-pc-windows-gnu/release/aegis.exe
+    expire_in: 1 week
+  allow_failure: true
 
 build-debug:
   extends: .test
@@ -63,3 +100,10 @@ build-debug:
     paths:
       - target/debug/aegis
     expire_in: 1 day
+
+security-audit:
+  extends: .test
+  stage: security
+  script:
+    - cargo audit || true
+  allow_failure: true
