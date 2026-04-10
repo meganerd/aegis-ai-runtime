@@ -24,10 +24,35 @@ pub struct JsonRpcError {
     message: String,
 }
 
+const MAX_REQUEST_SIZE: usize = 1_000_000;
+const ALLOWED_METHODS: [&str; 5] = [
+    "execute",
+    "approve",
+    "list_executions",
+    "get_execution",
+    "validate",
+];
+
 pub struct McpServer {
     aegis: Arc<Mutex<Aegis>>,
     policy: Arc<Policy>,
     exec_manager: ExecutionStateManager,
+}
+
+impl McpServer {
+    fn validate_method(&self, method: &str) -> Result<(), String> {
+        if !ALLOWED_METHODS.contains(&method) {
+            return Err(format!("Unknown method: {}", method));
+        }
+        Ok(())
+    }
+
+    fn validate_request_size(&self, body: &str) -> Result<(), String> {
+        if body.len() > MAX_REQUEST_SIZE {
+            return Err("Request too large".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl McpServer {
@@ -40,6 +65,18 @@ impl McpServer {
     }
 
     pub fn handle_request(&self, body: &str) -> JsonRpcResponse {
+        if let Err(e) = self.validate_request_size(body) {
+            return JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32600,
+                    message: e,
+                }),
+                id: None,
+            };
+        }
+
         let request: JsonRpcRequest = match serde_json::from_str(body) {
             Ok(r) => r,
             Err(e) => {
@@ -48,12 +85,24 @@ impl McpServer {
                     result: None,
                     error: Some(JsonRpcError {
                         code: -32700,
-                        message: format!("Parse error: {}", e),
+                        message: "Invalid JSON".to_string(),
                     }),
                     id: None,
                 };
             }
         };
+
+        if let Err(e) = self.validate_method(&request.method) {
+            return JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32601,
+                    message: e,
+                }),
+                id: request.id,
+            };
+        }
 
         let response = match request.method.as_str() {
             "execute" => {
@@ -237,5 +286,33 @@ impl McpServer {
         };
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_method() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let server = McpServer::new(aegis, policy);
+
+        assert!(server.validate_method("execute").is_ok());
+        assert!(server.validate_method("approve").is_ok());
+        assert!(server.validate_method("unknown").is_err());
+    }
+
+    #[test]
+    fn test_validate_request_size() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let server = McpServer::new(aegis, policy);
+
+        assert!(server.validate_request_size("{}").is_ok());
+        assert!(server.validate_request_size(&"x".repeat(1_000_001)).is_err());
     }
 }
