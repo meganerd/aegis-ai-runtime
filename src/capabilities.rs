@@ -43,6 +43,30 @@ impl Capability {
     pub fn matches(&self, other: &Capability) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
+
+    pub fn is_http(&self) -> bool {
+        matches!(self, Capability::HttpGet | Capability::HttpPost)
+    }
+
+    pub fn is_file_read(&self) -> bool {
+        matches!(self, Capability::FileRead)
+    }
+
+    pub fn is_file_write(&self) -> bool {
+        matches!(self, Capability::FileWrite)
+    }
+
+    pub fn is_file_list(&self) -> bool {
+        matches!(self, Capability::FileList)
+    }
+
+    pub fn is_kv_set(&self) -> bool {
+        matches!(self, Capability::KvSet)
+    }
+
+    pub fn is_kv_get(&self) -> bool {
+        matches!(self, Capability::KvGet)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -57,6 +81,30 @@ impl GrantSet {
 
     pub fn has(&self, cap: &Capability) -> bool {
         self.caps.iter().any(|c| c.matches(cap))
+    }
+
+    pub fn has_http(&self) -> bool {
+        self.caps.iter().any(|c| c.is_http())
+    }
+
+    pub fn has_file_read(&self) -> bool {
+        self.caps.iter().any(|c| c.is_file_read())
+    }
+
+    pub fn has_file_write(&self) -> bool {
+        self.caps.iter().any(|c| c.is_file_write())
+    }
+
+    pub fn has_file_list(&self) -> bool {
+        self.caps.iter().any(|c| c.is_file_list())
+    }
+
+    pub fn has_kv_set(&self) -> bool {
+        self.caps.iter().any(|c| c.is_kv_set())
+    }
+
+    pub fn has_kv_get(&self) -> bool {
+        self.caps.iter().any(|c| c.is_kv_get())
     }
 }
 
@@ -88,10 +136,10 @@ fn default_timeout() -> u64 {
 impl Default for ResourceLimits {
     fn default() -> Self {
         Self {
-            max_memory_mb: 64,
-            max_operations: 1_000_000,
-            max_call_depth: 64,
-            timeout_seconds: 30,
+            max_memory_mb: default_max_memory(),
+            max_operations: default_max_operations(),
+            max_call_depth: default_max_call_depth(),
+            timeout_seconds: default_timeout(),
         }
     }
 }

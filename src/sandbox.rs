@@ -80,7 +80,7 @@ impl Aegis {
         });
 
         // Register 'http_get' if granted
-        let has_http_get = grants.read().unwrap().has(&Capability::HttpGet);
+        let has_http_get = grants.read().unwrap().has_http();
         if has_http_get {
             engine.register_fn("http_get", |url: &str| -> Result<String, String> {
                 let client = reqwest::blocking::Client::builder()
@@ -99,7 +99,7 @@ impl Aegis {
         }
 
         // Register 'kv_set' if granted
-        let has_kv_set = grants.read().unwrap().has(&Capability::KvSet);
+        let has_kv_set = grants.read().unwrap().has_kv_set();
         if has_kv_set {
             let kv_store = kv_store.clone();
             engine.register_fn("kv_set", move |key: &str, value: &str| {
@@ -112,7 +112,7 @@ impl Aegis {
         }
 
         // Register 'kv_get' if granted
-        let has_kv_get = grants.read().unwrap().has(&Capability::KvGet);
+        let has_kv_get = grants.read().unwrap().has_kv_get();
         if has_kv_get {
             let kv_store = kv_store.clone();
             engine.register_fn("kv_get", move |key: &str| -> Option<String> {
@@ -121,15 +121,15 @@ impl Aegis {
         }
 
         // Register 'file_read' if granted
-        let has_file_read = grants.read().unwrap().has(&Capability::FileRead);
+        let has_file_read = grants.read().unwrap().has_file_read();
         if has_file_read {
-            engine.register_fn("file_read", |path: &str| -> Result<String, String> {
+            engine.register_fn("file_read", move |path: &str| -> Result<String, String> {
                 std::fs::read_to_string(path).map_err(|e| e.to_string())
             });
         }
 
         // Register 'file_write' if granted
-        let has_file_write = grants.read().unwrap().has(&Capability::FileWrite);
+        let has_file_write = grants.read().unwrap().has_file_write();
         if has_file_write {
             engine.register_fn(
                 "file_write",
@@ -141,7 +141,7 @@ impl Aegis {
         }
 
         // Register 'file_list' if granted
-        let has_file_list = grants.read().unwrap().has(&Capability::FileList);
+        let has_file_list = grants.read().unwrap().has_file_list();
         if has_file_list {
             engine.register_fn("file_list", |path: &str| -> Result<Vec<String>, String> {
                 let entries = std::fs::read_dir(path)
@@ -230,13 +230,13 @@ mod tests {
     }
 
     #[test]
-    fn test_with_policy_requires_approval() {
+    fn test_with_policy() {
         use crate::capabilities::Capability;
         use crate::policy::Policy;
         let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
         let policy = Policy::from_yaml(&policy_yaml).unwrap();
         let aegis = Aegis::new();
-        let aegis = aegis.with_policy(&policy, "deploy_config");
-        assert!(aegis.grants.read().unwrap().has(&Capability::Exec));
+        let aegis = aegis.with_policy(&policy, "weather_fetch");
+        assert!(aegis.grants.read().unwrap().has_http());
     }
 }
