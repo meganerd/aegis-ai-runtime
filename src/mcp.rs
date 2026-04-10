@@ -1,6 +1,13 @@
 use crate::{Aegis, ExecutionStateManager, Policy};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+#[derive(Debug)]
+struct RateLimitEntry {
+    count: usize,
+    window_start: Instant,
+}
 
 #[derive(Debug, serde::Deserialize)]
 pub struct JsonRpcRequest {
@@ -25,6 +32,27 @@ pub struct JsonRpcError {
 }
 
 const MAX_REQUEST_SIZE: usize = 1_000_000;
+const MAX_REQUESTS_PER_MINUTE: usize = 60;
+const MAX_CONCURRENT_EXECUTIONS: usize = 10;
+const EXECUTION_TIMEOUT_SECS: u64 = 300;
+
+#[derive(Debug, Clone)]
+pub struct DoSConfig {
+    pub max_requests_per_minute: usize,
+    pub max_concurrent_executions: usize,
+    pub timeout_seconds: u64,
+}
+
+impl Default for DoSConfig {
+    fn default() -> Self {
+        Self {
+            max_requests_per_minute: MAX_REQUESTS_PER_MINUTE,
+            max_concurrent_executions: MAX_CONCURRENT_EXECUTIONS,
+            timeout_seconds: EXECUTION_TIMEOUT_SECS,
+        }
+    }
+}
+
 const ALLOWED_METHODS: [&str; 5] = [
     "execute",
     "approve",
@@ -37,6 +65,8 @@ pub struct McpServer {
     aegis: Arc<Mutex<Aegis>>,
     policy: Arc<Policy>,
     exec_manager: ExecutionStateManager,
+    rate_limits: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+    dos_config: DoSConfig,
 }
 
 impl McpServer {
@@ -61,11 +91,59 @@ impl McpServer {
             aegis: Arc::new(Mutex::new(aegis)),
             policy: Arc::new(policy),
             exec_manager: ExecutionStateManager::new(),
+            rate_limits: Arc::new(Mutex::new(HashMap::new())),
+            dos_config: DoSConfig::default(),
         }
+    }
+
+    fn check_rate_limit(&self, client_id: &str) -> Result<(), String> {
+        let now = Instant::now();
+        let mut limits = self.rate_limits.lock().unwrap();
+
+        if let Some(entry) = limits.get_mut(client_id) {
+            if now.duration_since(entry.window_start) > Duration::from_secs(60) {
+                entry.count = 0;
+                entry.window_start = now;
+            }
+            if entry.count >= self.dos_config.max_requests_per_minute {
+                return Err("Rate limit exceeded".to_string());
+            }
+            entry.count += 1;
+        } else {
+            limits.insert(
+                client_id.to_string(),
+                RateLimitEntry {
+                    count: 1,
+                    window_start: now,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn check_concurrent_limit(&self) -> Result<(), String> {
+        let active = self.exec_manager.count_active();
+        if active >= self.dos_config.max_concurrent_executions {
+            return Err("Too many concurrent executions".to_string());
+        }
+        Ok(())
     }
 
     pub fn handle_request(&self, body: &str) -> JsonRpcResponse {
         if let Err(e) = self.validate_request_size(body) {
+            return JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                result: None,
+                error: Some(JsonRpcError {
+                    code: -32600,
+                    message: e,
+                }),
+                id: None,
+            };
+        }
+
+        let client_id = "default";
+        if let Err(e) = self.check_rate_limit(client_id) {
             return JsonRpcResponse {
                 jsonrpc: "2.0".to_string(),
                 result: None,
@@ -314,5 +392,27 @@ mod tests {
 
         assert!(server.validate_request_size("{}").is_ok());
         assert!(server.validate_request_size(&"x".repeat(1_000_001)).is_err());
+    }
+
+    #[test]
+    fn test_rate_limit_allows_requests() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let server = McpServer::new(aegis, policy);
+
+        for _ in 0..5 {
+            assert!(server.check_rate_limit("client1").is_ok());
+        }
+    }
+
+    #[test]
+    fn test_concurrent_limit() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let server = McpServer::new(aegis, policy);
+
+        assert!(server.check_concurrent_limit().is_ok());
     }
 }

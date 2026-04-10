@@ -153,4 +153,13 @@ impl ExecutionStateManager {
     pub fn list(&self) -> Vec<ExecutionRecord> {
         self.executions.read().unwrap().values().cloned().collect()
     }
+
+    pub fn count_active(&self) -> usize {
+        self.executions
+            .read()
+            .unwrap()
+            .values()
+            .filter(|r| matches!(r.state, ExecutionState::Running))
+            .count()
+    }
 }
