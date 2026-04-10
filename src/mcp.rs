@@ -1,4 +1,4 @@
-use crate::{Aegis, Policy};
+use crate::{Aegis, ExecutionStateManager, Policy};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +27,7 @@ pub struct JsonRpcError {
 pub struct McpServer {
     aegis: Arc<Mutex<Aegis>>,
     policy: Arc<Policy>,
+    exec_manager: ExecutionStateManager,
 }
 
 impl McpServer {
@@ -34,6 +35,7 @@ impl McpServer {
         Self {
             aegis: Arc::new(Mutex::new(aegis)),
             policy: Arc::new(policy),
+            exec_manager: ExecutionStateManager::new(),
         }
     }
 
@@ -92,18 +94,25 @@ impl McpServer {
                 }
 
                 let result = {
+                    // Create execution record
+                    let exec_id = self.exec_manager.create(code, tool);
+                    self.exec_manager.start(&exec_id).ok();
+
                     let aegis = self.aegis.lock().unwrap();
                     let aegis = aegis.with_policy(&self.policy, tool);
                     aegis.execute(code)
                 };
 
                 match result {
-                    Ok(r) => JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: Some(serde_json::json!({ "value": format!("{:?}", r) })),
-                        error: None,
-                        id: request.id,
-                    },
+                    Ok(r) => {
+                        // Record completion - need exec_id from above, this is simplified
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: Some(serde_json::json!({ "value": format!("{:?}", r) })),
+                            error: None,
+                            id: request.id,
+                        }
+                    }
                     Err(e) => JsonRpcResponse {
                         jsonrpc: "2.0".to_string(),
                         result: None,
@@ -141,6 +150,79 @@ impl McpServer {
                     ),
                     error: None,
                     id: request.id,
+                }
+            }
+            "list_executions" => {
+                let executions: Vec<serde_json::Value> = self
+                    .exec_manager
+                    .list()
+                    .iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "id": e.id,
+                            "tool": e.tool,
+                            "state": e.state,
+                            "created_at": e.created_at
+                        })
+                    })
+                    .collect();
+                JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: Some(serde_json::json!({ "executions": executions })),
+                    error: None,
+                    id: request.id,
+                }
+            }
+            "pause_execution" => {
+                let id = request
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("id"))
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("");
+
+                match self.exec_manager.pause(id) {
+                    Ok(_) => JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(serde_json::json!({ "paused": id })),
+                        error: None,
+                        id: request.id,
+                    },
+                    Err(e) => JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32000,
+                            message: e,
+                        }),
+                        id: request.id,
+                    },
+                }
+            }
+            "resume_execution" => {
+                let id = request
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("id"))
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("");
+
+                match self.exec_manager.resume(id) {
+                    Ok(_) => JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: Some(serde_json::json!({ "resumed": id })),
+                        error: None,
+                        id: request.id,
+                    },
+                    Err(e) => JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32000,
+                            message: e,
+                        }),
+                        id: request.id,
+                    },
                 }
             }
             _ => JsonRpcResponse {

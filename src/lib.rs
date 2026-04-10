@@ -1,9 +1,11 @@
 pub mod capabilities;
+pub mod execution_state;
 pub mod mcp;
 pub mod policy;
 pub mod sandbox;
 
 pub use capabilities::{Capability, GrantSet, ResourceLimits};
+pub use execution_state::{ExecutionRecord, ExecutionState, ExecutionStateManager};
 pub use policy::Policy;
 pub use sandbox::Aegis;
 
