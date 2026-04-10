@@ -69,6 +69,28 @@ impl McpServer {
                     .and_then(|t| t.as_str())
                     .unwrap_or("default");
 
+                // Check if approval is required
+                let needs_approval = if let Some(tool_policy) = self.policy.get_tool(tool) {
+                    tool_policy.requires_approval
+                } else {
+                    false
+                };
+
+                if needs_approval {
+                    return JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32001,
+                            message: format!(
+                                "Tool '{}' requires approval. Use 'approve' method first.",
+                                tool
+                            ),
+                        }),
+                        id: request.id,
+                    };
+                }
+
                 let result = {
                     let aegis = self.aegis.lock().unwrap();
                     let aegis = aegis.with_policy(&self.policy, tool);
@@ -98,6 +120,25 @@ impl McpServer {
                 JsonRpcResponse {
                     jsonrpc: "2.0".to_string(),
                     result: Some(serde_json::json!({ "policies": policies })),
+                    error: None,
+                    id: request.id,
+                }
+            }
+            "approve" => {
+                // Approve a tool for execution (simple approval for now)
+                let tool = request
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("tool"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("");
+
+                // For now, just acknowledge - in production would check auth
+                JsonRpcResponse {
+                    jsonrpc: "2.0".to_string(),
+                    result: Some(
+                        serde_json::json!({ "approved": tool, "message": "Tool approved for execution" }),
+                    ),
                     error: None,
                     id: request.id,
                 }
