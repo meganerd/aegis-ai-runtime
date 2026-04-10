@@ -27,6 +27,11 @@ tools:
       max_call_depth: 32
       timeout_seconds: 30
     requires_approval: false
+    allowed_domains:
+      - api.weather.com
+      - api.openweathermap.org
+    allowed_key_prefixes:
+      - "weather:"
 
   file_processor:
     capabilities:
@@ -38,6 +43,9 @@ tools:
       max_call_depth: 64
       timeout_seconds: 120
     requires_approval: false
+    allowed_paths:
+      - /data/input/
+      - /data/output/
 
   deploy_config:
     capabilities:
@@ -49,3 +57,5 @@ tools:
       max_call_depth: 32
       timeout_seconds: 60
     requires_approval: true
+    allowed_paths:
+      - /etc/myapp/

@@ -1,4 +1,5 @@
 use crate::capabilities::{Capability, GrantSet, ResourceLimits};
+use crate::policy::ToolPolicy;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
@@ -6,6 +7,7 @@ pub struct Aegis {
     grants: Arc<RwLock<GrantSet>>,
     limits: Arc<RwLock<ResourceLimits>>,
     kv_store: Arc<RwLock<HashMap<String, String>>>,
+    policy: Arc<RwLock<Option<ToolPolicy>>>,
 }
 
 impl Clone for Aegis {
@@ -14,6 +16,7 @@ impl Clone for Aegis {
             grants: Arc::clone(&self.grants),
             limits: Arc::clone(&self.limits),
             kv_store: Arc::clone(&self.kv_store),
+            policy: Arc::clone(&self.policy),
         }
     }
 }
@@ -23,11 +26,13 @@ impl Aegis {
         let grants = Arc::new(RwLock::new(GrantSet::default()));
         let limits = Arc::new(RwLock::new(ResourceLimits::default()));
         let kv_store = Arc::new(RwLock::new(HashMap::new()));
+        let policy = Arc::new(RwLock::new(None));
 
         Self {
             grants,
             limits,
             kv_store,
+            policy,
         }
     }
 
@@ -35,16 +40,19 @@ impl Aegis {
         if let Some(tool) = policy.get_tool(tool_name) {
             let grants = Arc::new(RwLock::new(GrantSet::new(tool.capabilities.clone())));
             let limits = Arc::new(RwLock::new(tool.resource_limits.clone()));
+            let tool_policy = Arc::new(RwLock::new(Some(tool.clone())));
             Self {
                 grants,
                 limits,
                 kv_store: Arc::new(RwLock::new(HashMap::new())),
+                policy: tool_policy,
             }
         } else {
             Self {
                 grants: Arc::clone(&self.grants),
                 limits: Arc::clone(&self.limits),
                 kv_store: Arc::new(RwLock::new(HashMap::new())),
+                policy: Arc::new(RwLock::new(None)),
             }
         }
     }
@@ -81,8 +89,14 @@ impl Aegis {
 
         // Register 'http_get' if granted
         let has_http_get = grants.read().unwrap().has_http();
+        let http_policy = self.policy.clone();
         if has_http_get {
-            engine.register_fn("http_get", |url: &str| -> Result<String, String> {
+            engine.register_fn("http_get", move |url: &str| -> Result<String, String> {
+                if let Some(ref p) = http_policy.read().unwrap().as_ref() {
+                    if !p.allows_domain(url) {
+                        return Err(format!("Domain not allowed: {}", url));
+                    }
+                }
                 let client = reqwest::blocking::Client::builder()
                     .timeout(std::time::Duration::from_secs(30))
                     .build()
@@ -100,40 +114,69 @@ impl Aegis {
 
         // Register 'kv_set' if granted
         let has_kv_set = grants.read().unwrap().has_kv_set();
+        let kv_policy = self.policy.clone();
         if has_kv_set {
             let kv_store = kv_store.clone();
             engine.register_fn("kv_set", move |key: &str, value: &str| {
+                if let Some(ref p) = kv_policy.read().unwrap().as_ref() {
+                    if !p.allows_key(key) {
+                        return Err(format!("Key prefix not allowed: {}", key));
+                    }
+                }
                 kv_store
                     .write()
                     .unwrap()
                     .insert(key.to_string(), value.to_string());
-                true
+                Ok(true)
             });
         }
 
         // Register 'kv_get' if granted
         let has_kv_get = grants.read().unwrap().has_kv_get();
+        let get_policy = self.policy.clone();
         if has_kv_get {
             let kv_store = kv_store.clone();
-            engine.register_fn("kv_get", move |key: &str| -> Option<String> {
-                kv_store.read().unwrap().get(key).cloned()
+            engine.register_fn("kv_get", move |key: &str| -> Result<String, String> {
+                if let Some(ref p) = get_policy.read().unwrap().as_ref() {
+                    if !p.allows_key(key) {
+                        return Err(format!("Key prefix not allowed: {}", key));
+                    }
+                }
+                kv_store
+                    .read()
+                    .unwrap()
+                    .get(key)
+                    .cloned()
+                    .ok_or_else(|| format!("Key not found: {}", key))
             });
         }
 
         // Register 'file_read' if granted
         let has_file_read = grants.read().unwrap().has_file_read();
+        let file_policy = self.policy.clone();
         if has_file_read {
             engine.register_fn("file_read", move |path: &str| -> Result<String, String> {
+                if let Some(p) = file_policy.read().unwrap().as_ref() {
+                    if !p.allows_path(path) {
+                        return Err(format!("Path not allowed: {}", path));
+                    }
+                }
                 std::fs::read_to_string(path).map_err(|e| e.to_string())
             });
         }
 
         // Register 'file_write' if granted
         let has_file_write = grants.read().unwrap().has_file_write();
+        let write_policy = self.policy.clone();
         if has_file_write {
             engine.register_fn(
                 "file_write",
-                |path: &str, content: &str| -> Result<bool, String> {
+                move |path: &str, content: &str| -> Result<bool, String> {
+                    if let Some(p) = write_policy.read().unwrap().as_ref() {
+                        if !p.allows_path(path) {
+                            return Err(format!("Path not allowed: {}", path));
+                        }
+                    }
                     std::fs::write(path, content).map_err(|e| e.to_string())?;
                     Ok(true)
                 },
@@ -142,15 +185,24 @@ impl Aegis {
 
         // Register 'file_list' if granted
         let has_file_list = grants.read().unwrap().has_file_list();
+        let list_policy = self.policy.clone();
         if has_file_list {
-            engine.register_fn("file_list", |path: &str| -> Result<Vec<String>, String> {
-                let entries = std::fs::read_dir(path)
-                    .map_err(|e| e.to_string())?
-                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?;
-                Ok(entries)
-            });
+            engine.register_fn(
+                "file_list",
+                move |path: &str| -> Result<Vec<String>, String> {
+                    if let Some(p) = list_policy.read().unwrap().as_ref() {
+                        if !p.allows_path(path) {
+                            return Err(format!("Path not allowed: {}", path));
+                        }
+                    }
+                    let entries = std::fs::read_dir(path)
+                        .map_err(|e| e.to_string())?
+                        .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| e.to_string())?;
+                    Ok(entries)
+                },
+            );
         }
 
         // Execute the script
@@ -238,5 +290,50 @@ mod tests {
         let aegis = Aegis::new();
         let aegis = aegis.with_policy(&policy, "weather_fetch");
         assert!(aegis.grants.read().unwrap().has_http());
+    }
+
+    #[test]
+    fn test_path_validation() {
+        use crate::policy::Policy;
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let tool = policy.get_tool("file_processor").unwrap();
+
+        assert!(!tool.allows_path("/etc/passwd"), "should deny /etc/passwd");
+        assert!(
+            tool.allows_path("/data/input/file.txt"),
+            "should allow /data/input/"
+        );
+    }
+
+    #[test]
+    fn test_key_prefix_validation() {
+        use crate::policy::Policy;
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let tool = policy.get_tool("weather_fetch").unwrap();
+
+        assert!(!tool.allows_key("secret"), "should deny secret key");
+        assert!(
+            tool.allows_key("weather:temp"),
+            "should allow weather: prefix"
+        );
+    }
+
+    #[test]
+    fn test_domain_validation() {
+        use crate::policy::Policy;
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let tool = policy.get_tool("weather_fetch").unwrap();
+
+        assert!(
+            !tool.allows_domain("https://evil.com/data"),
+            "should deny evil.com"
+        );
+        assert!(
+            tool.allows_domain("https://api.weather.com/data"),
+            "should allow api.weather.com"
+        );
     }
 }

@@ -1,13 +1,44 @@
-use crate::capabilities::{Capability, GrantSet, ResourceLimits};
+use crate::capabilities::{Capability, ResourceLimits};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolPolicy {
     pub capabilities: Vec<Capability>,
     pub resource_limits: ResourceLimits,
     #[serde(default)]
     pub requires_approval: bool,
+    #[serde(default)]
+    pub allowed_paths: Vec<String>,
+    #[serde(default)]
+    pub allowed_domains: Vec<String>,
+    #[serde(default)]
+    pub allowed_key_prefixes: Vec<String>,
+}
+
+impl ToolPolicy {
+    pub fn allows_path(&self, path: &str) -> bool {
+        if self.allowed_paths.is_empty() {
+            return true;
+        }
+        self.allowed_paths
+            .iter()
+            .any(|p| path.starts_with(p) || path.contains(p))
+    }
+
+    pub fn allows_domain(&self, url: &str) -> bool {
+        if self.allowed_domains.is_empty() {
+            return true;
+        }
+        self.allowed_domains.iter().any(|d| url.contains(d))
+    }
+
+    pub fn allows_key(&self, key: &str) -> bool {
+        if self.allowed_key_prefixes.is_empty() {
+            return true;
+        }
+        self.allowed_key_prefixes.iter().any(|p| key.starts_with(p))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
