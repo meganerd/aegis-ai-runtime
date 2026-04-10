@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod capabilities;
 pub mod execution_state;
 pub mod mcp;

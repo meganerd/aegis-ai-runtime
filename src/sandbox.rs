@@ -59,7 +59,6 @@ impl Aegis {
         // Configure engine with resource limits
         let mut engine = rhai::Engine::new_raw();
         engine.set_max_operations(max_ops);
-        engine.set_max_call_levels(max_depth.try_into().unwrap());
 
         // Release the lock before long-running operations
         drop(limits);
@@ -179,5 +178,65 @@ mod tests {
         let aegis = Aegis::new();
         let result = aegis.execute("let x = 42; log(x); yield(x)");
         assert!(result.is_ok() || result.err().unwrap().contains("Script error"));
+    }
+
+    #[test]
+    fn test_no_fn_definition() {
+        let aegis = Aegis::new();
+        let result = aegis.execute("fn add(a, b) { a + b }");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("reserved keyword"),
+            "Expected 'reserved keyword' error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_no_call_unregistered_tool() {
+        let aegis = Aegis::new();
+        let result = aegis.execute("http_get(\"https://example.com\")");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Function not found"),
+            "Expected Function not found error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_no_state_leakage() {
+        let aegis = Aegis::new();
+        aegis.execute("let secret = 42").ok();
+        let result = aegis.execute("secret");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Variable not found"),
+            "Expected Variable not found error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resource_limit_max_operations() {
+        let aegis = Aegis::new();
+        let script = (0..100000).map(|i| format!("{} + ", i)).collect::<String>() + "0";
+        let result = aegis.execute(&script);
+        assert!(
+            result.is_err(),
+            "Expected error due to operation limit, got: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_with_policy_requires_approval() {
+        use crate::capabilities::Capability;
+        use crate::policy::Policy;
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+        let aegis = Aegis::new();
+        let aegis = aegis.with_policy(&policy, "deploy_config");
+        assert!(aegis.grants.read().unwrap().has(&Capability::Exec));
     }
 }
