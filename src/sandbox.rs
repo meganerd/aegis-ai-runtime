@@ -50,7 +50,19 @@ impl Aegis {
     }
 
     pub fn execute(&self, code: &str) -> Result<rhai::Dynamic, String> {
+        let limits = self.limits.read().unwrap();
+
+        // Store limits in local variables to avoid borrow issues
+        let max_ops = limits.max_operations;
+        let max_depth = limits.max_call_depth;
+
+        // Configure engine with resource limits
         let mut engine = rhai::Engine::new_raw();
+        engine.set_max_operations(max_ops);
+        engine.set_max_call_levels(max_depth.try_into().unwrap());
+
+        // Release the lock before long-running operations
+        drop(limits);
 
         let grants = self.grants.clone();
         let kv_store = self.kv_store.clone();
