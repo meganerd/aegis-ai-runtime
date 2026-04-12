@@ -1,4 +1,4 @@
-use aegis::{mcp::McpServer, Aegis, Policy};
+use aegis_ai_runtime::{mcp::McpServer, Aegis, Policy};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{Read, Write};

@@ -1,10 +1,13 @@
 [package]
-name = "aegis"
-version = "0.4.0"
+name = "aegis-ai-runtime"
+version = "0.4.1"
 edition = "2021"
 description = "Aegis: A Safe Agent Execution Runtime - Rhai-based sandbox for AI agents"
 license = "MIT OR Apache-2.0"
 authors = ["gustin"]
+homepage = "https://github.com/meganerd/aegis-ai-runtime"
+repository = "https://github.com/meganerd/aegis-ai-runtime"
+documentation = "https://github.com/meganerd/aegis-ai-runtime#readme"
 
 [dependencies]
 rhai = { version = "1.24", default-features = false, features = ["sync", "no_function", "no_closure", "no_module"] }
@@ -23,9 +26,9 @@ default = ["sync"]
 sync = ["rhai/sync"]
 
 [[bin]]
-name = "aegis"
+name = "aegis-ai-runtime"
 path = "src/main.rs"
 
 [lib]
-name = "aegis"
+name = "aegis_ai_runtime"
 path = "src/lib.rs"
