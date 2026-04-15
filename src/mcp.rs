@@ -87,12 +87,16 @@ impl McpServer {
 
 impl McpServer {
     pub fn new(aegis: Aegis, policy: Policy) -> Self {
+        Self::new_with_config(aegis, policy, DoSConfig::default())
+    }
+
+    pub fn new_with_config(aegis: Aegis, policy: Policy, dos_config: DoSConfig) -> Self {
         Self {
             aegis: Arc::new(Mutex::new(aegis)),
             policy: Arc::new(policy),
             exec_manager: ExecutionStateManager::new(),
             rate_limits: Arc::new(Mutex::new(HashMap::new())),
-            dos_config: DoSConfig::default(),
+            dos_config,
         }
     }
 
@@ -220,11 +224,23 @@ impl McpServer {
                     };
                 }
 
-                let result = {
-                    // Create execution record
-                    let exec_id = self.exec_manager.create(code, tool);
-                    self.exec_manager.start(&exec_id).ok();
+                if let Err(e) = self.check_concurrent_limit() {
+                    return JsonRpcResponse {
+                        jsonrpc: "2.0".to_string(),
+                        result: None,
+                        error: Some(JsonRpcError {
+                            code: -32002,
+                            message: e,
+                        }),
+                        id: request.id,
+                    };
+                }
 
+                // Create execution record
+                let exec_id = self.exec_manager.create(code, tool);
+                self.exec_manager.start(&exec_id).ok();
+
+                let result = {
                     let aegis = self.aegis.lock().unwrap();
                     let aegis = aegis.with_policy(&self.policy, tool);
                     aegis.execute(code)
@@ -232,7 +248,9 @@ impl McpServer {
 
                 match result {
                     Ok(r) => {
-                        // Record completion - need exec_id from above, this is simplified
+                        self.exec_manager
+                            .complete(&exec_id, &format!("{:?}", r))
+                            .ok();
                         JsonRpcResponse {
                             jsonrpc: "2.0".to_string(),
                             result: Some(serde_json::json!({ "value": format!("{:?}", r) })),
@@ -240,15 +258,18 @@ impl McpServer {
                             id: request.id,
                         }
                     }
-                    Err(e) => JsonRpcResponse {
-                        jsonrpc: "2.0".to_string(),
-                        result: None,
-                        error: Some(JsonRpcError {
-                            code: -32000,
-                            message: e,
-                        }),
-                        id: request.id,
-                    },
+                    Err(e) => {
+                        self.exec_manager.fail(&exec_id, &e).ok();
+                        JsonRpcResponse {
+                            jsonrpc: "2.0".to_string(),
+                            result: None,
+                            error: Some(JsonRpcError {
+                                code: -32000,
+                                message: e,
+                            }),
+                            id: request.id,
+                        }
+                    }
                 }
             }
             "list_policies" => {
@@ -391,7 +412,9 @@ mod tests {
         let server = McpServer::new(aegis, policy);
 
         assert!(server.validate_request_size("{}").is_ok());
-        assert!(server.validate_request_size(&"x".repeat(1_000_001)).is_err());
+        assert!(server
+            .validate_request_size(&"x".repeat(1_000_001))
+            .is_err());
     }
 
     #[test]
@@ -414,5 +437,29 @@ mod tests {
         let server = McpServer::new(aegis, policy);
 
         assert!(server.check_concurrent_limit().is_ok());
+    }
+
+    #[test]
+    fn test_execute_rejected_when_concurrent_limit_is_saturated() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+
+        let dos_config = DoSConfig {
+            max_requests_per_minute: 60,
+            max_concurrent_executions: 0,
+            timeout_seconds: 300,
+        };
+
+        let server = McpServer::new_with_config(aegis, policy, dos_config);
+        let response = server.handle_request(
+            r#"{"jsonrpc":"2.0","method":"execute","params":{"code":"result(1)","tool":"default"},"id":1}"#,
+        );
+
+        let error = response.error.expect("expected concurrency error");
+        assert_eq!(error.code, -32002);
+        assert!(error.message.contains("Too many concurrent executions"));
+
+        assert!(server.exec_manager.list().is_empty());
     }
 }
