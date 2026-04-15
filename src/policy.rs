@@ -14,6 +14,8 @@ pub struct ToolPolicy {
     pub allowed_domains: Vec<String>,
     #[serde(default)]
     pub allowed_key_prefixes: Vec<String>,
+    #[serde(default)]
+    pub allowed_env_vars: Vec<String>,
 }
 
 impl ToolPolicy {
@@ -38,6 +40,13 @@ impl ToolPolicy {
             return true;
         }
         self.allowed_key_prefixes.iter().any(|p| key.starts_with(p))
+    }
+
+    pub fn allows_env(&self, name: &str) -> bool {
+        if self.allowed_env_vars.is_empty() {
+            return true;
+        }
+        self.allowed_env_vars.iter().any(|n| n == name)
     }
 }
 
@@ -88,5 +97,16 @@ tools:
         // Just check tool exists
         let tool = policy.get_tool("weather_fetch");
         assert!(tool.is_some());
+    }
+
+    #[test]
+    fn test_env_allowlist() {
+        let tool = ToolPolicy {
+            allowed_env_vars: vec!["API_TOKEN".to_string()],
+            ..Default::default()
+        };
+
+        assert!(tool.allows_env("API_TOKEN"));
+        assert!(!tool.allows_env("SSH_PRIVATE_KEY"));
     }
 }

@@ -3,6 +3,35 @@ use crate::policy::ToolPolicy;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+fn redact_text(input: &str, secrets: &[String]) -> String {
+    let mut redacted = input.to_string();
+
+    for secret in secrets {
+        if secret.len() >= 4 && redacted.contains(secret) {
+            redacted = redacted.replace(secret, "[REDACTED]");
+        }
+    }
+
+    let sensitive_markers = [
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "ssh-rsa",
+        "ghp_",
+        "github_pat_",
+        "sk-",
+        "AKIA",
+    ];
+
+    for marker in sensitive_markers {
+        if redacted.contains(marker) {
+            redacted = redacted.replace(marker, "[REDACTED]");
+        }
+    }
+
+    redacted
+}
+
 pub struct Aegis {
     grants: Arc<RwLock<GrantSet>>,
     limits: Arc<RwLock<ResourceLimits>>,
@@ -73,10 +102,13 @@ impl Aegis {
 
         let grants = self.grants.clone();
         let kv_store = self.kv_store.clone();
+        let seen_secrets: Arc<RwLock<Vec<String>>> = Arc::new(RwLock::new(Vec::new()));
 
         // Register 'log' - always available
+        let log_secrets = Arc::clone(&seen_secrets);
         engine.register_fn("log", move |msg: &str| {
-            println!("[aegis] {}", msg);
+            let secrets = log_secrets.read().unwrap();
+            println!("[aegis] {}", redact_text(msg, &secrets));
         });
 
         // Register 'result' - always available (yield is reserved in Rhai)
@@ -205,12 +237,40 @@ impl Aegis {
             );
         }
 
+        // Register 'env' if granted
+        let has_env = grants.read().unwrap().has(&Capability::Env);
+        let env_policy = self.policy.clone();
+        if has_env {
+            let env_secrets = Arc::clone(&seen_secrets);
+            engine.register_fn("env", move |name: &str| -> Result<String, String> {
+                if let Some(p) = env_policy.read().unwrap().as_ref() {
+                    if !p.allows_env(name) {
+                        return Err("Environment variable access denied".to_string());
+                    }
+                }
+
+                let value = std::env::var(name)
+                    .map_err(|_| format!("Environment variable not found: {}", name))?;
+
+                let mut secrets = env_secrets.write().unwrap();
+                if !secrets.contains(&value) {
+                    secrets.push(value.clone());
+                }
+
+                Ok(value)
+            });
+        }
+
         // Execute the script
         let result = engine.eval::<rhai::Dynamic>(code);
 
         match result {
             Ok(dyn_val) => Ok(dyn_val),
-            Err(e) => Err(format!("Script error: {}", e)),
+            Err(e) => {
+                let secrets = seen_secrets.read().unwrap();
+                let message = format!("Script error: {}", e);
+                Err(redact_text(&message, &secrets))
+            }
         }
     }
 }
@@ -283,7 +343,6 @@ mod tests {
 
     #[test]
     fn test_with_policy() {
-        use crate::capabilities::Capability;
         use crate::policy::Policy;
         let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
         let policy = Policy::from_yaml(&policy_yaml).unwrap();
@@ -335,5 +394,55 @@ mod tests {
             tool.allows_domain("https://api.weather.com/data"),
             "should allow api.weather.com"
         );
+    }
+
+    #[test]
+    fn test_redact_text_hides_markers_and_known_secrets() {
+        let known = vec!["my-secret-token-123".to_string()];
+        let input = "token=my-secret-token-123 github_pat_abc ssh-rsa";
+        let redacted = redact_text(input, &known);
+
+        assert!(!redacted.contains("my-secret-token-123"));
+        assert!(!redacted.contains("github_pat_abc"));
+        assert!(!redacted.contains("ssh-rsa"));
+        assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn test_env_capability_denied_without_grant() {
+        let aegis = Aegis::new();
+        let result = aegis.execute("env(\"HOME\")");
+        let err = result.unwrap_err();
+
+        assert!(
+            err.contains("Function not found"),
+            "Expected env to be unavailable without capability, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_env_allowlist_rule() {
+        use crate::policy::Policy;
+
+        let policy_yaml = r#"
+tools:
+  env_tool:
+    capabilities:
+      - env
+    resource_limits:
+      memory_mb: 32
+      max_operations: 100000
+      max_call_depth: 64
+      timeout_seconds: 5
+    allowed_env_vars:
+      - ALLOWED_TEST_KEY
+"#;
+
+        let policy = Policy::from_yaml(policy_yaml).unwrap();
+        let tool = policy.get_tool("env_tool").unwrap();
+
+        assert!(tool.allows_env("ALLOWED_TEST_KEY"));
+        assert!(!tool.allows_env("SSH_PRIVATE_KEY"));
     }
 }

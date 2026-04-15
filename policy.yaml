@@ -59,3 +59,16 @@ tools:
     requires_approval: true
     allowed_paths:
       - /etc/myapp/
+
+  secrets_reader:
+    capabilities:
+      - env
+    resource_limits:
+      memory_mb: 16
+      max_operations: 100000
+      max_call_depth: 32
+      timeout_seconds: 10
+    requires_approval: true
+    allowed_env_vars:
+      - OPENWEATHER_API_KEY
+      - GITHUB_TOKEN
