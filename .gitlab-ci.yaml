@@ -1,0 +1,19 @@
+stages:
+  - test
+
+variables:
+  CARGO_HOME: "${CI_PROJECT_DIR}/.cargo"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: "sparse"
+
+test:rust:
+  stage: test
+  image: rust:1.86-bookworm
+  tags:
+    - docker
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .cargo/
+      - target/
+  script:
+    - cargo test --all-targets --all-features --verbose
