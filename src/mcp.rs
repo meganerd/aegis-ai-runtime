@@ -1,6 +1,8 @@
 use crate::{Aegis, ExecutionStateManager, Policy};
 use std::collections::HashMap;
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
@@ -241,9 +243,51 @@ impl McpServer {
                 self.exec_manager.start(&exec_id).ok();
 
                 let result = {
+                    let code = code.to_string();
+                    let tool = tool.to_string();
+                    let timeout = Duration::from_secs(self.dos_config.timeout_seconds);
                     let aegis = self.aegis.lock().unwrap();
-                    let aegis = aegis.with_policy(&self.policy, tool);
-                    aegis.execute(code)
+                    let aegis = aegis.with_policy(&self.policy, &tool);
+                    let (tx, rx) = mpsc::channel();
+
+                    thread::spawn(move || {
+                        let _ = tx.send(aegis.execute(&code));
+                    });
+
+                    match rx.recv_timeout(timeout) {
+                        Ok(result) => result,
+                        Err(RecvTimeoutError::Timeout) => {
+                            let timeout_msg = format!(
+                                "Execution timed out after {} seconds",
+                                self.dos_config.timeout_seconds
+                            );
+                            self.exec_manager.fail(&exec_id, &timeout_msg).ok();
+
+                            return JsonRpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(JsonRpcError {
+                                    code: -32003,
+                                    message: timeout_msg,
+                                }),
+                                id: request.id,
+                            };
+                        }
+                        Err(RecvTimeoutError::Disconnected) => {
+                            let err_msg = "Execution worker disconnected".to_string();
+                            self.exec_manager.fail(&exec_id, &err_msg).ok();
+
+                            return JsonRpcResponse {
+                                jsonrpc: "2.0".to_string(),
+                                result: None,
+                                error: Some(JsonRpcError {
+                                    code: -32004,
+                                    message: err_msg,
+                                }),
+                                id: request.id,
+                            };
+                        }
+                    }
                 };
 
                 match result {
@@ -461,5 +505,34 @@ mod tests {
         assert!(error.message.contains("Too many concurrent executions"));
 
         assert!(server.exec_manager.list().is_empty());
+    }
+
+    #[test]
+    fn test_execute_times_out_when_timeout_is_exceeded() {
+        let aegis = Aegis::new();
+        let policy_yaml = std::fs::read_to_string("policy.yaml").unwrap();
+        let policy = Policy::from_yaml(&policy_yaml).unwrap();
+
+        let dos_config = DoSConfig {
+            max_requests_per_minute: 60,
+            max_concurrent_executions: 10,
+            timeout_seconds: 0,
+        };
+
+        let server = McpServer::new_with_config(aegis, policy, dos_config);
+        let response = server.handle_request(
+            r#"{"jsonrpc":"2.0","method":"execute","params":{"code":"sleep(100); result(1)","tool":"default"},"id":2}"#,
+        );
+
+        let error = response.error.expect("expected timeout error");
+        assert_eq!(error.code, -32003);
+        assert!(error.message.contains("Execution timed out"));
+
+        let executions = server.exec_manager.list();
+        assert_eq!(executions.len(), 1);
+        assert!(
+            matches!(executions[0].state, crate::ExecutionState::Failed(_)),
+            "expected failed execution state after timeout"
+        );
     }
 }
